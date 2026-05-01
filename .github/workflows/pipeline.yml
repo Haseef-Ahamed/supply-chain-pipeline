@@ -14,10 +14,24 @@ jobs:
     name: Build → Scan → Sign → Deploy
     runs-on: self-hosted
 
+    env:
+      # Convert owner name to lowercase for ghcr.io compatibility
+      # ghcr.io requires all image names to be lowercase
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/myapp
+
     steps:
 
       - name: Checkout source code
         uses: actions/checkout@v4
+
+      - name: Convert image name to lowercase
+        run: |
+          # GitHub usernames can have uppercase but
+          # container registries require lowercase
+          IMAGE_LOWER=$(echo "ghcr.io/${{ github.repository_owner }}/myapp" \
+            | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_LOWER=${IMAGE_LOWER}" >> $GITHUB_ENV
+          echo "Using image: ${IMAGE_LOWER}"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -29,10 +43,10 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            -t ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }} \
-            -t ghcr.io/${{ github.repository_owner }}/myapp:latest \
+            -t ${IMAGE_LOWER}:${{ github.sha }} \
+            -t ${IMAGE_LOWER}:latest \
             .
-          echo "Built: ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}"
+          echo "Built: ${IMAGE_LOWER}:${{ github.sha }}"
 
       - name: Scan image for vulnerabilities (Trivy) - Gate 1
         run: |
@@ -41,7 +55,7 @@ jobs:
             --severity CRITICAL \
             --ignore-unfixed \
             --no-progress \
-            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+            ${IMAGE_LOWER}:${{ github.sha }}
 
       - name: Save Trivy scan report
         if: always()
@@ -52,8 +66,8 @@ jobs:
             --output security/trivy-report.json \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
-            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
-          echo "Report saved"
+            ${IMAGE_LOWER}:${{ github.sha }}
+          echo "Report saved to security/trivy-report.json"
 
       - name: Scan IaC configurations (Trivy) - Gate 2
         run: |
@@ -64,11 +78,9 @@ jobs:
 
       - name: Push image to GitHub Container Registry
         run: |
-          docker push \
-            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
-          docker push \
-            ghcr.io/${{ github.repository_owner }}/myapp:latest
-          echo "Image pushed to ghcr.io"
+          docker push ${IMAGE_LOWER}:${{ github.sha }}
+          docker push ${IMAGE_LOWER}:latest
+          echo "Pushed: ${IMAGE_LOWER}:${{ github.sha }}"
 
       - name: Sign image with Cosign - Gate 3
         env:
@@ -78,7 +90,7 @@ jobs:
           cosign sign \
             --key /tmp/cosign.key \
             --yes \
-            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+            ${IMAGE_LOWER}:${{ github.sha }}
           rm -f /tmp/cosign.key
           echo "Image signed successfully"
 
@@ -86,7 +98,7 @@ jobs:
         run: |
           cosign verify \
             --key security/cosign.pub \
-            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+            ${IMAGE_LOWER}:${{ github.sha }}
           echo "Signature verified — image is authentic"
 
       - name: Deploy to Kubernetes

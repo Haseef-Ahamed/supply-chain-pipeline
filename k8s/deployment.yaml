@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: myapp
-          image: ghcr.io/Haseef-Ahamed/myapp:IMAGE_TAG
+          image: ghcr.io/haseef-ahamed/myapp:IMAGE_TAG
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
