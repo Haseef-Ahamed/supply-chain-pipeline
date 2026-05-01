@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: supply-chain-demo
+  labels:
+    purpose: security-demo
+    managed-by: github-actions

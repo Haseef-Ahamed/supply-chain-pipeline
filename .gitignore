@@ -1,0 +1,25 @@
+# Private Cosign key - NEVER commit this
+cosign.key
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+env/
+
+# Environment variables
+.env
+*.env
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

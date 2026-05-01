@@ -1,0 +1,108 @@
+name: Supply Chain Security Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  secure-pipeline:
+    name: Build → Scan → Sign → Deploy
+    runs-on: self-hosted
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/myapp:latest \
+            .
+          echo "Built: ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}"
+
+      - name: Scan image for vulnerabilities (Trivy) - Gate 1
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+
+      - name: Save Trivy scan report
+        if: always()
+        run: |
+          mkdir -p security
+          trivy image \
+            --format json \
+            --output security/trivy-report.json \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+          echo "Report saved"
+
+      - name: Scan IaC configurations (Trivy) - Gate 2
+        run: |
+          trivy config \
+            --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            ./k8s/
+
+      - name: Push image to GitHub Container Registry
+        run: |
+          docker push \
+            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+          docker push \
+            ghcr.io/${{ github.repository_owner }}/myapp:latest
+          echo "Image pushed to ghcr.io"
+
+      - name: Sign image with Cosign - Gate 3
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          echo "${{ secrets.COSIGN_KEY }}" > /tmp/cosign.key
+          cosign sign \
+            --key /tmp/cosign.key \
+            --yes \
+            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+          rm -f /tmp/cosign.key
+          echo "Image signed successfully"
+
+      - name: Verify image signature (Cosign) - Gate 4
+        run: |
+          cosign verify \
+            --key security/cosign.pub \
+            ghcr.io/${{ github.repository_owner }}/myapp:${{ github.sha }}
+          echo "Signature verified — image is authentic"
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          sed "s|IMAGE_TAG|${{ github.sha }}|g" \
+            k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/myapp \
+            --namespace supply-chain-demo \
+            --timeout=120s
+          echo "======================================"
+          echo "All 4 security gates passed"
+          echo "Gate 1: Trivy image scan    PASSED"
+          echo "Gate 2: Trivy IaC scan      PASSED"
+          echo "Gate 3: Cosign sign         PASSED"
+          echo "Gate 4: Cosign verify       PASSED"
+          echo "App: http://localhost:30080/health"
+          echo "======================================"
