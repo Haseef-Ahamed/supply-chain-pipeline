@@ -150,6 +150,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Debug image value
+        run: echo "Image is: '${{ needs.build.outputs.image }}'"
 
       - name: Sign image with Cosign
         env:
