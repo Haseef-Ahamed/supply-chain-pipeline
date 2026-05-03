@@ -9,29 +9,31 @@ permissions:
   contents: read
   packages: write
 
+# ─────────────────────────────────────────────────────────────
+# Shared image name used across all jobs
+# Defined here so every job can reference it
+# ─────────────────────────────────────────────────────────────
+env:
+  IMAGE_BASE: ghcr.io/haseef-ahamed/myapp
+
 jobs:
-  secure-pipeline:
-    name: Build → Scan → Sign → Deploy
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 1 — Build Image
+  # Builds the Docker image and pushes it to ghcr.io
+  # Later jobs pull from ghcr.io by commit SHA tag
+  # ═══════════════════════════════════════════════════════════
+  build:
+    name: 🔨 Build Image
     runs-on: self-hosted
 
-    env:
-      # Convert owner name to lowercase for ghcr.io compatibility
-      # ghcr.io requires all image names to be lowercase
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/myapp
+    outputs:
+      image: ${{ steps.set-image.outputs.image }}
 
     steps:
 
       - name: Checkout source code
         uses: actions/checkout@v4
-
-      - name: Convert image name to lowercase
-        run: |
-          # GitHub usernames can have uppercase but
-          # container registries require lowercase
-          IMAGE_LOWER=$(echo "ghcr.io/${{ github.repository_owner }}/myapp" \
-            | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_LOWER=${IMAGE_LOWER}" >> $GITHUB_ENV
-          echo "Using image: ${IMAGE_LOWER}"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -43,19 +45,54 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            -t ${IMAGE_LOWER}:${{ github.sha }} \
-            -t ${IMAGE_LOWER}:latest \
+            -t ${{ env.IMAGE_BASE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE_BASE }}:latest \
             .
-          echo "Built: ${IMAGE_LOWER}:${{ github.sha }}"
+          echo "Built: ${{ env.IMAGE_BASE }}:${{ github.sha }}"
 
-      - name: Scan image for vulnerabilities (Trivy) - Gate 1
+      - name: Push image to GitHub Container Registry
         run: |
+          docker push ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_BASE }}:latest
+          echo "Pushed: ${{ env.IMAGE_BASE }}:${{ github.sha }}"
+
+      - name: Set image output for downstream jobs
+        id: set-image
+        run: |
+          echo "image=${{ env.IMAGE_BASE }}:${{ github.sha }}" \
+            >> $GITHUB_OUTPUT
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 2 — Scan Image (Gate 1)
+  # Trivy scans the image for known CVE vulnerabilities
+  # Fails pipeline if CRITICAL vulnerabilities are found
+  # ═══════════════════════════════════════════════════════════
+  scan-image:
+    name: 🔍 Scan Image — Gate 1
+    runs-on: self-hosted
+    needs: build
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan image for CVE vulnerabilities (Trivy)
+        run: |
+          echo "Scanning: ${{ needs.build.outputs.image }}"
           trivy image \
             --exit-code 1 \
             --severity CRITICAL \
             --ignore-unfixed \
             --no-progress \
-            ${IMAGE_LOWER}:${{ github.sha }}
+            ${{ needs.build.outputs.image }}
 
       - name: Save Trivy scan report
         if: always()
@@ -66,43 +103,109 @@ jobs:
             --output security/trivy-report.json \
             --severity CRITICAL,HIGH,MEDIUM \
             --ignore-unfixed \
-            ${IMAGE_LOWER}:${{ github.sha }}
-          echo "Report saved to security/trivy-report.json"
+            ${{ needs.build.outputs.image }}
+          echo "Trivy report saved to security/trivy-report.json"
 
-      - name: Scan IaC configurations (Trivy) - Gate 2
+  # ═══════════════════════════════════════════════════════════
+  # JOB 3 — Scan IaC (Gate 2)
+  # Trivy scans Kubernetes YAML files for misconfigurations
+  # Fails pipeline if CRITICAL or HIGH misconfigs are found
+  # ═══════════════════════════════════════════════════════════
+  scan-iac:
+    name: 📋 Scan IaC — Gate 2
+    runs-on: self-hosted
+    needs: scan-image
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Scan Kubernetes YAML for misconfigurations (Trivy)
         run: |
+          echo "Scanning k8s/ folder for misconfigurations..."
           trivy config \
             --exit-code 1 \
             --severity CRITICAL,HIGH \
             ./k8s/
 
-      - name: Push image to GitHub Container Registry
-        run: |
-          docker push ${IMAGE_LOWER}:${{ github.sha }}
-          docker push ${IMAGE_LOWER}:latest
-          echo "Pushed: ${IMAGE_LOWER}:${{ github.sha }}"
+  # ═══════════════════════════════════════════════════════════
+  # JOB 4 — Sign Image (Gate 3)
+  # Cosign signs the image using private key from GitHub Secret
+  # Signature is stored in ghcr.io alongside the image
+  # ═══════════════════════════════════════════════════════════
+  sign-image:
+    name: ✍️ Sign Image — Gate 3
+    runs-on: self-hosted
+    needs: scan-iac
 
-      - name: Sign image with Cosign - Gate 3
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image with Cosign
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
+          echo "Signing: ${{ needs.build.outputs.image }}"
           echo "${{ secrets.COSIGN_KEY }}" > /tmp/cosign.key
           cosign sign \
             --key /tmp/cosign.key \
             --yes \
-            ${IMAGE_LOWER}:${{ github.sha }}
+            ${{ needs.build.outputs.image }}
           rm -f /tmp/cosign.key
           echo "Image signed successfully"
 
-      - name: Verify image signature (Cosign) - Gate 4
+  # ═══════════════════════════════════════════════════════════
+  # JOB 5 — Verify Signature (Gate 4)
+  # Cosign verifies the signature using the public key
+  # Fails pipeline if signature is missing or invalid
+  # This is the final check before deployment is allowed
+  # ═══════════════════════════════════════════════════════════
+  verify-signature:
+    name: ✅ Verify Signature — Gate 4
+    runs-on: self-hosted
+    needs: sign-image
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Verify image signature (Cosign)
         run: |
+          echo "Verifying: ${{ needs.build.outputs.image }}"
           cosign verify \
             --key security/cosign.pub \
-            ${IMAGE_LOWER}:${{ github.sha }}
+            ${{ needs.build.outputs.image }}
           echo "Signature verified — image is authentic"
 
-      - name: Deploy to Kubernetes
+  # ═══════════════════════════════════════════════════════════
+  # JOB 6 — Deploy to Kubernetes
+  # Only runs if ALL 4 gates passed
+  # Deploys the verified, signed image to the k3d cluster
+  # ═══════════════════════════════════════════════════════════
+  deploy:
+    name: 🚀 Deploy to Kubernetes
+    runs-on: self-hosted
+    needs: verify-signature
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Deploy verified image to Kubernetes
         run: |
+          echo "Deploying: ${{ needs.build.outputs.image }}"
           kubectl apply -f k8s/namespace.yaml
           sed "s|IMAGE_TAG|${{ github.sha }}|g" \
             k8s/deployment.yaml | kubectl apply -f -
@@ -110,11 +213,21 @@ jobs:
           kubectl rollout status deployment/myapp \
             --namespace supply-chain-demo \
             --timeout=120s
-          echo "======================================"
-          echo "All 4 security gates passed"
-          echo "Gate 1: Trivy image scan    PASSED"
-          echo "Gate 2: Trivy IaC scan      PASSED"
-          echo "Gate 3: Cosign sign         PASSED"
-          echo "Gate 4: Cosign verify       PASSED"
-          echo "App: http://localhost:30080/health"
-          echo "======================================"
+
+      - name: Deployment summary
+        run: |
+          echo "╔══════════════════════════════════════════╗"
+          echo "║   SUPPLY CHAIN PIPELINE — ALL PASSED     ║"
+          echo "╠══════════════════════════════════════════╣"
+          echo "║  Gate 1: Trivy image scan     ✓ PASSED   ║"
+          echo "║  Gate 2: Trivy IaC scan       ✓ PASSED   ║"
+          echo "║  Gate 3: Cosign sign          ✓ PASSED   ║"
+          echo "║  Gate 4: Cosign verify        ✓ PASSED   ║"
+          echo "╠══════════════════════════════════════════╣"
+          echo "║  Image: ${{ env.IMAGE_BASE }}:           ║"
+          echo "║  ${{ github.sha }}                       ║"
+          echo "╠══════════════════════════════════════════╣"
+          echo "║  App: http://localhost:30080/health      ║"
+          echo "╚══════════════════════════════════════════╝"
+          echo ""
+          kubectl get pods -n supply-chain-demo

@@ -26,6 +26,6 @@ def health():
 def info():
     return {
         "app": "FastAPI Supply Chain Demo",
-        "environment": os.getenv("APP_ENV", "local"),
+        "environment": os.getenv("APP_ENV", "local, Self Hosted"),
         "description": "Secured by Trivy scanning and Cosign signing"
     }
