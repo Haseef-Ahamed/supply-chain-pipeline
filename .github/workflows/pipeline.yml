@@ -137,7 +137,7 @@ jobs:
   sign-image:
     name: ✍️ Sign Image — Gate 3
     runs-on: self-hosted
-    needs: scan-iac
+    needs: [scan-iac, build]
 
     steps:
 
@@ -151,9 +151,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Debug image value
-        run: | 
-          echo "Image is: ${{ needs.build.outputs.image }}"
+
 
       - name: Sign image with Cosign
         env:
@@ -177,7 +175,7 @@ jobs:
   verify-signature:
     name: ✅ Verify Signature — Gate 4
     runs-on: self-hosted
-    needs: sign-image
+    needs: [sign-image, build]
 
     steps:
 
@@ -200,7 +198,7 @@ jobs:
   deploy:
     name: 🚀 Deploy to Kubernetes
     runs-on: self-hosted
-    needs: verify-signature
+    needs: [verify-signature, build]
 
     steps:
 
