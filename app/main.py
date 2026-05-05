@@ -10,8 +10,8 @@ app = FastAPI(
 @app.get("/")
 def root():
     return {
-        "message": "Supply Chain Security Pipeline — Demo App",
-        "version": "1.0.0",
+        "message": "Supply Chain Security Pipeline — Testing App",
+        "version": "2.0.0",
         "status": "running"
     }
 
@@ -25,7 +25,7 @@ def health():
 @app.get("/info")
 def info():
     return {
-        "app": "FastAPI Supply Chain Demo",
+        "app": "FastAPI Supply Chain Testing",
         "environment": os.getenv("APP_ENV", "local, Self Hosted"),
         "description": "Secured by Trivy scanning and Cosign signing"
     }
