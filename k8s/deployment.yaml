@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: myapp
+  name: Hsf_app
   namespace: supply-chain-demo
   labels:
-    app: myapp
+    app: Hsf_app
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: myapp
+      app: Hsf_app
   template:
     metadata:
       labels:
-        app: myapp
+        app: Hsf_app
     spec:
       # Pod-level security context
       # This is what Trivy KSV-0118 requires
@@ -25,8 +25,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: myapp
-          image: ghcr.io/haseef-ahamed/myapp:IMAGE_TAG
+        - name: Hsf_app
+          image: ghcr.io/haseef-ahamed/Hsf_app:IMAGE_TAG
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
