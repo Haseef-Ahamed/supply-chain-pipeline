@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_BASE: ghcr.io/haseef-ahamed/Hsf_app
+  IMAGE_BASE: ghcr.io/haseef-ahamed/hsf_app
 
 jobs:
 
@@ -234,7 +234,7 @@ jobs:
           sed "s|IMAGE_TAG|${{ github.sha }}|g" \
             k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
-          kubectl rollout status deployment/Hsf_app \
+          kubectl rollout status deployment/hsf_app \
             --namespace supply-chain-demo \
             --timeout=120s
 
