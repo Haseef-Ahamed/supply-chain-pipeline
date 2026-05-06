@@ -523,12 +523,6 @@ reach the running Kubernetes cluster.
 
 ---
 
-## License
-
-MIT License — see LICENSE file for details.
-
----
-
 *Built as a practical DevSecOps learning project.*
 *All tools used are free and open source.*
 *Fully local — no cloud services required for Kubernetes.*
